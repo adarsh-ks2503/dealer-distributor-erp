@@ -41,7 +41,7 @@ class UserSeeder extends Seeder
                 'name' => 'Super',
                 'last_name' => 'Admin',
                 'mobile' => '9876543210',
-                'email' => 'yashams.singhal@gmail.com',
+                'email' => 'admin@gmail.com',
                 'role' => 'Super Admin'
             ]
         ];
@@ -56,7 +56,7 @@ class UserSeeder extends Seeder
                     'mobile' => $userData['mobile'],
                     'user_type' => 'web',
                     'address' => 'India',
-                    'password' => Hash::make('Success2025$')
+                    'password' => Hash::make('12345678')
                 ]
             );
             $user->assignRole($userData['role']);
