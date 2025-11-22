@@ -1,0 +1,411 @@
+@extends('layouts.main')
+@section('title', 'Singhal - Edit Dispatch')
+@section('content')
+<main class="main" id="main">
+    @if ($errors->any())
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        <strong>Validation Errors:</strong>
+        <ul>
+            @foreach ($errors->all() as $error)
+                <li>{{ $error }}</li>
+            @endforeach
+        </ul>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    @endif
+    <div class="container-fluid my-4">
+        <div class="card mb-4 pt-4">
+            @if(session('success'))
+                <div class="alert alert-success alert-dismissible fade show" role="alert">
+                    <strong>Success!</strong> {{ session('success') }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+            @endif
+            @if(session('error'))
+                <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                    <strong>Error!</strong> {{ session('error') }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+            @endif
+            <div class="card-body d-flex justify-content-between align-items-center">
+                <div>
+                    <h1 class="h3 mb-0">Edit Dispatch - {{ $dispatch->type }}</h1>
+                    <nav aria-label="breadcrumb">
+                        <ol class="breadcrumb mb-0">
+                            <li class="breadcrumb-item"><a href="#">Dashboard</a></li>
+                            <li class="breadcrumb-item"><a href="{{ route('dispatch.index') }}">Dispatch</a></li>
+                            <li class="breadcrumb-item active" aria-current="page">Edit</li>
+                        </ol>
+                    </nav>
+                </div>
+                <a href="{{ route('dispatch.index') }}" class="btn btn-outline-secondary">
+                    <i class="fas fa-arrow-left me-2"></i>Back
+                </a>
+            </div>
+        </div>
+        <form action="{{ route('dispatch.update', $dispatch->id) }}" method="POST" enctype="multipart/form-data" id="dispatch-form">
+            @csrf
+            @method('PUT')
+            <input type="hidden" name="type" value="{{ $dispatch->type }}">
+            @if ($dispatch->type == 'distributor')
+                <input type="hidden" name="distributor_id" value="{{ $party->id }}">
+            @else
+                <input type="hidden" name="dealer_id" value="{{ $party->id }}">
+            @endif
+            <div class="row">
+                <div class="col-lg-5">
+                    <div class="card">
+                        <div class="card-header"><i class="fas fa-user-circle me-2"></i>Basic Info</div>
+                        <div class="card-body">
+                            <div class="basic-details-grid">
+                                <div class="detail-item"><label>Name</label><span>{{ $party->name }}</span></div>
+                                <div class="detail-item"><label>Code</label><span>{{ $party->code }}</span></div>
+                                <div class="detail-item"><label>Mobile</label><span>{{ $party->mobile_no }}</span></div>
+                                <div class="detail-item"><label>Email Address</label><span>{{ $party->email }}</span></div>
+                                <div class="detail-item"><label>GST No.</label><span>{{ $party->gst_num }}</span></div>
+                                <div class="detail-item"><label>PAN</label><span>{{ $party->pan_num }}</span></div>
+                                <div class="detail-item"><label>Order Type</label><span>{{ $dispatch->type }}</span></div>
+                                <div class="detail-item"><label>Order Limit (MT)</label><span class="text-danger">{{ $party->order_limit }}</span></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-7">
+                    <div class="row g-4">
+                        <div class="col-md-6">
+                            <div class="card h-100"><div class="card-header"><i class="fas fa-file-invoice-dollar me-2"></i>Billing Address <span class="required-asterisk">*</span></div>
+                                <div class="card-body d-flex flex-column gap-3 mt-2">
+                                    <input required id="recipient-name" name="recipient_name" type="text" class="form-control" placeholder="Recipient Name" value="{{ old('recipient_name', $dispatch->recipient_name) }}">
+                                    <textarea required name="recipient_address" class="form-control" rows="2" placeholder="Billing Address">{{ old('recipient_address', $dispatch->recipient_address) }}</textarea>
+                                    <select required name="recipient_state" id="state" class="form-select">
+                                        <option value="">Select</option>
+                                        @foreach ($states as $state)
+                                            <option value="{{ $state->id }}" {{ old('recipient_state', $dispatch->recipient_state_id) == $state->id ? 'selected' : '' }}>{{ $state->state }}</option>
+                                        @endforeach
+                                    </select>
+                                    <select required name="recipient_city" class="form-select" id="city">
+                                        <option value="">Select City</option>
+                                    </select>
+                                    <div>
+                                        <input required name="recipient_pincode" type="text" class="form-control" placeholder="Pincode" pattern="[0-9]{6}" maxlength="6" oninput="validatePincode(this, 'recipient-pincode-error')" value="{{ old('recipient_pincode', $dispatch->recipient_pincode) }}">
+                                        <span id="recipient-pincode-error" class="text-danger"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card h-100"><div class="card-header"><i class="fas fa-truck me-2"></i>Delivery Address <span class="required-asterisk">*</span></div>
+                                <div class="card-body d-flex flex-column gap-3 mt-2">
+                                    <input required name="consignee_name" id="consignee-name" type="text" class="form-control" placeholder="Consignee Name" value="{{ old('consignee_name', $dispatch->consignee_name) }}">
+                                    <textarea required name="consignee_address" class="form-control" rows="2" placeholder="Delivery Address">{{ old('consignee_address', $dispatch->consignee_address) }}</textarea>
+                                    <select required name="consignee_state" class="form-select" id="state2">
+                                        <option value="">Select State</option>
+                                        @foreach ($states as $state)
+                                            <option value="{{ $state->id }}" {{ old('consignee_state', $dispatch->consignee_state_id) == $state->id ? 'selected' : '' }}>{{ $state->state }}</option>
+                                        @endforeach
+                                    </select>
+                                    <select required name="consignee_city" class="form-select" id="city2">
+                                        <option value="">Select City</option>
+                                    </select>
+                                    <div>
+                                        <input required name="consignee_pincode" type="text" class="form-control" placeholder="Pincode" pattern="[0-9]{6}" maxlength="6" oninput="validatePincode(this, 'consignee-pincode-error')" value="{{ old('consignee_pincode', $dispatch->consignee_pincode) }}">
+                                        <span id="consignee-pincode-error" class="text-danger"></span>
+                                    </div>
+                                    <input required name="consignee_mobile_no" type="number" class="form-control" placeholder="Mobile Number" value="{{ old('consignee_mobile_no', $dispatch->consignee_mobile_no) }}">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="card mt-3">
+                <div class="card-header"><i class="fas fa-receipt me-2"></i>Dispatch Details</div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-md-3">
+                            <label class="form-label">Warehouse <span class="required-asterisk">*</span></label>
+                            <select required name="warehouse_id" class="form-select" id="warehouse-select">
+                                <option value="">Select Warehouse</option>
+                                @foreach ($warehouses as $warehouse)
+                                    <option value="{{ $warehouse->id }}" {{ old('warehouse_id', $dispatch->warehouse_id) == $warehouse->id ? 'selected' : '' }}>{{ $warehouse->name }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Dispatch Number</label>
+                            <input id="dispatch_number" name="dispatch_number" type="text" class="form-control" readonly value="{{ old('dispatch_number', $dispatch->dispatch_number) }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Dealer/Distributor Name</label>
+                            <input type="text" class="form-control" readonly value="{{ $party->name }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Dispatch Date <span class="required-asterisk">*</span></label>
+                            <input type="date" id="dispatch_date" name="dispatch_date" class="form-control" required value="{{ old('dispatch_date', $dispatch->dispatch_date instanceof \Carbon\Carbon ? $dispatch->dispatch_date->format('Y-m-d') : $dispatch->dispatch_date) }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Bill To</label>
+                            <input name="bill_to" id="bill-to" type="text" class="form-control" placeholder="Consignee Name" value="{{ old('bill_to', $dispatch->bill_to) }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Bill No <span class="required-asterisk">*</span></label>
+                            <input name="bill_number" type="text" class="form-control" placeholder="Bill Number" required value="{{ old('bill_number', $dispatch->bill_number) }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Dispatch Out Time</label>
+                            <input name="dispatch_out_time" type="text" class="form-control" placeholder="HH:MM" pattern="^(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]$" title="Please enter time in HH:MM format (e.g., 14:30)" value="{{ old('dispatch_out_time', $dispatch->dispatch_out_time) }}" oninput="this.value = this.value.replace(/[^0-9:]/g, '').slice(0, 5); validateTime(this);">
+                            <span id="dispatch-out-time-error" class="text-danger"></span>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Payment Slip</label>
+                            <div class="input-group">
+                                <label for="paymentSlip" class="custom-file-upload w-100">
+                                    <i class="fas fa-cloud-upload-alt me-1"></i>
+                                    <span class="file-label">{{ $dispatch->payment_slip ? 'Replace File' : 'Choose file' }}</span>
+                                    <span class="file-name text-muted ms-2">{{ $dispatch->payment_slip ? basename($dispatch->payment_slip) : '' }}</span>
+                                </label>
+                                <input name="payment_slip" type="file" id="paymentSlip" class="attachment-input">
+                            </div>
+                        </div>
+                        <div class="col-md-12">
+                            <label class="form-label">Remark</label>
+                            <textarea name="dispatch_remarks" class="form-control" rows="2">{{ old('dispatch_remarks', $dispatch->dispatch_remarks) }}</textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="card mt-3">
+                <div class="card-header"><i class="fas fa-shuttle-van me-2"></i>Transport & Vehicle Details</div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-md-3">
+                            <label class="form-label">Transporter Name <span class="required-asterisk">*</span></label>
+                            <input name="transporter_name" type="text" class="form-control" required value="{{ old('transporter_name', $dispatch->transporter_name) }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Vehicle No.</label>
+                            <input name="vehicle_no" type="text" class="form-control" value="{{ old('vehicle_no', $dispatch->vehicle_no) }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Driver Name</label>
+                            <input name="driver_name" type="text" class="form-control" value="{{ old('driver_name', $dispatch->driver_name) }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Driver Mobile</label>
+                            <input name="driver_mobile_no" type="text" class="form-control" value="{{ old('driver_mobile_no', $dispatch->driver_mobile_no) }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">E-Way Bill No.</label>
+                            <input name="e_way_bill_no" type="text" class="form-control" value="{{ old('e_way_bill_no', $dispatch->e_way_bill_no) }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Bilty No.</label>
+                            <input name="bilty_no" type="text" class="form-control" value="{{ old('bilty_no', $dispatch->bilty_no) }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Remark</label>
+                            <input name="transport_remarks" type="text" class="form-control" value="{{ old('transport_remarks', $dispatch->transport_remarks) }}">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span><i class="fas fa-list-ul me-2"></i>Item List</span>
+                    <button type="button" class="btn btn-sm btn-success" id="add-item-row"><i class="fas fa-plus me-1"></i> Add Item</button>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-bordered table-hover">
+                            <thead>
+                                <tr>
+                                    <th>SN</th>
+                                    <th>Order No. <span class="required-asterisk">*</span></th>
+                                    <th>Allocation <span class="required-asterisk">*</span></th>
+                                    <th>Order QTY (MT)</th>
+                                    <th>Already Disp.</th>
+                                    <th>Remaining QTY</th>
+                                    <th>Item Name</th>
+                                    <th>Size <span class="required-asterisk">*</span></th>
+                                    <th>Length (ft) <span class="required-asterisk">*</span></th>
+                                    <th>Dispatch Qty <span class="required-asterisk">*</span></th>
+                                    <th>Order Basic Price</th>
+                                    <th>Gauge Diff (Rate)</th>
+                                    <th>Final Price /MT</th>
+                                    <th>Loading Charge</th>
+                                    <th>Insurance</th>
+                                    <th>GST (%)</th>
+                                    <th>Token Amount (₹)</th>
+                                    <th>Total Amount (₹)</th>
+                                    <th>Payment Term</th>
+                                    <th>Remark</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="item-list-container">
+                                @php
+                                    $items = old('items', $dispatch->items->toArray());
+                                @endphp
+                                @foreach ($items as $index => $item)
+                                    <tr>
+                                        <td><span class="sn">{{ $index + 1 }}</span></td>
+                                        <td>
+                                            <select required name="items[{{ $index }}][order_id]" class="form-select form-select-sm order-select">
+                                                <option value="">Select</option>
+                                                @foreach ($orders as $order)
+                                                    <option value="{{ $order->id }}" {{ old('items.' . $index . '.order_id', $item['order_id'] ?? '') == $order->id ? 'selected' : '' }}>{{ $order->order_number }}</option>
+                                                @endforeach
+                                            </select>
+                                        </td>
+                                        <td>
+                                            <select required name="items[{{ $index }}][allocation_id]" class="form-select form-select-sm allocation-select">
+                                                <option value="">Select</option>
+                                                @if (isset($item['order_id']) && $item['order_id'])
+                                                    @php
+                                                        $order = $orders->find($item['order_id']);
+                                                        $allocations = $order ? $order->allocations : [];
+                                                    @endphp
+                                                    @foreach ($allocations as $allocation)
+                                                        <option value="{{ $allocation->id }}" {{ old('items.' . $index . '.allocation_id', $item['allocation_id'] ?? '') == $allocation->id ? 'selected' : '' }}
+                                                                data-remaining="{{ $allocation->remaining_qty }}"
+                                                                data-payment-term="{{ $allocation->payment_terms }}"
+                                                                data-token-amount="{{ $allocation->token_amount ?? 'N/A' }}">
+                                                            {{ $loop->iteration }}- (For {{ $allocation->allocated_to_type }}) :
+                                                            {{ $allocation->allocated_to_type === 'dealer' ? ($allocation->allocatable->name ?? 'N/A') : ($allocation->allocatable->name ?? 'N/A') }}
+                                                            ({{ $allocation->allocated_to_type === 'dealer' ? ($allocation->allocatable->code ?? 'N/A') : ($allocation->allocatable->code ?? 'N/A') }}) -
+                                                            Remaining: {{ $allocation->remaining_qty }} MT
+                                                        </option>
+                                                    @endforeach
+                                                @endif
+                                            </select>
+                                        </td>
+                                        <td><input type="text" name="items[{{ $index }}][order_qty]" class="form-control form-control-sm" readonly value="{{ old('items.' . $index . '.order_qty', $item['order_qty'] ?? '') }}"></td>
+                                        <td><input type="text" name="items[{{ $index }}][already_disp]" class="form-control form-control-sm" readonly value="{{ old('items.' . $index . '.already_disp', $item['already_disp'] ?? '') }}"></td>
+                                        <td><input type="text" name="items[{{ $index }}][remaining_qty]" class="form-control form-control-sm remaining-qty" readonly value="{{ old('items.' . $index . '.remaining_qty', $item['remaining_qty'] ?? '') }}"></td>
+                                        <td><input type="text" name="items[{{ $index }}][item_name]" class="form-control form-control-sm" value="{{ old('items.' . $index . '.item_name', $item['item_name'] ?? ($singleItemName ?? 'TMT Bar')) }}" readonly></td>
+                                        <td>
+                                            <select required name="items[{{ $index }}][size]" class="form-select form-select-sm size-select">
+                                                <option value="">Select</option>
+                                                @foreach ($sizes as $size)
+                                                    <option data-rate="{{ $size->rate }}" value="{{ $size->id }}" {{ old('items.' . $index . '.size', $item['size_id'] ?? '') == $size->id ? 'selected' : '' }}>{{ $size->size }} mm</option>
+                                                @endforeach
+                                            </select>
+                                        </td>
+                                        <td><input type="text" value="{{ old('items.' . $index . '.length', $item['length'] ?? '12') }}" name="items[{{ $index }}][length]" class="form-control form-control-sm" placeholder="Enter"></td>
+                                        <td><input required type="number" step="0.01" name="items[{{ $index }}][dispatch_qty]" class="form-control form-select-sm dispatch-qty item-calc" placeholder="Enter" value="{{ old('items.' . $index . '.dispatch_qty', $item['dispatch_qty'] ?? '') }}"></td>
+                                        <td><input readonly type="number" step="0.01" name="items[{{ $index }}][basic_price]" class="form-control form-control-sm item-calc basic-price-input" value="{{ old('items.' . $index . '.basic_price', $item['basic_price'] ?? '') }}"></td>
+                                        <td><input type="number" step="0.01" name="items[{{ $index }}][gauge_diff]" class="form-control form-control-sm item-calc" readonly value="{{ old('items.' . $index . '.gauge_diff', $item['gauge_diff'] ?? '') }}"></td>
+                                        <td><input type="text" name="items[{{ $index }}][final_price]" class="form-control form-control-sm" placeholder="Auto Calc" readonly value="{{ old('items.' . $index . '.final_price', $item['final_price'] ?? '') }}"></td>
+                                        <td><input type="number" step="0.01" name="items[{{ $index }}][loading_charge]" class="form-control form-control-sm item-calc" value="{{ old('items.' . $index . '.loading_charge', $item['loading_charge'] ?? ($loadingCharge ?? 265)) }}" readonly></td>
+                                        <td><input type="number" step="0.01" name="items[{{ $index }}][insurance]" class="form-control form-control-sm item-calc" value="{{ old('items.' . $index . '.insurance', $item['insurance'] ?? ($insuranceCharge ?? 40)) }}" readonly></td>
+                                        <td><input type="number" step="0.01" name="items[{{ $index }}][gst]" class="form-control form-control-sm item-calc" value="{{ old('items.' . $index . '.gst', $item['gst'] ?? ($gstRate ?? 18)) }}" readonly></td>
+                                        <td><input type="text" name="items[{{ $index }}][token_amount]" class="form-control form-control-sm token-amount" readonly value="{{ old('items.' . $index . '.token_amount', $item['token_amount'] ?? '0.00') }}"></td>
+                                        <td><input type="text" name="items[{{ $index }}][total_amount]" class="form-control form-control-sm item-total" placeholder="Auto Calc" readonly value="{{ old('items.' . $index . '.total_amount', $item['total_amount'] ?? '') }}"></td>
+                                        <td>
+                                            <select name="items[{{ $index }}][payment_term]" class="form-select form-select-sm payment-term-select" disabled>
+                                                <option value="">Select</option>
+                                                <option value="Advance" {{ old('items.' . $index . '.payment_term', $item['payment_term'] ?? '') == 'Advance' ? 'selected' : '' }}>Advance</option>
+                                                <option value="Next Day" {{ old('items.' . $index . '.payment_term', $item['payment_term'] ?? '') == 'Next Day' ? 'selected' : '' }}>Next Day</option>
+                                                <option value="15 Days Later" {{ old('items.' . $index . '.payment_term', $item['payment_term'] ?? '') == '15 Days Later' ? 'selected' : '' }}>15 Days Later</option>
+                                                <option value="30 Days Later" {{ old('items.' . $index . '.payment_term', $item['payment_term'] ?? '') == '30 Days Later' ? 'selected' : '' }}>30 Days Later</option>
+                                            </select>
+                                            @if (old('items.' . $index . '.payment_term', $item['payment_term'] ?? ''))
+                                                <input type="hidden" name="items[{{ $index }}][payment_term]" value="{{ old('items.' . $index . '.payment_term', $item['payment_term'] ?? '') }}">
+                                            @endif
+                                        </td>
+                                        <td><input type="text" name="items[{{ $index }}][remark]" class="form-control form-control-sm" placeholder="Remark" value="{{ old('items.' . $index . '.remark', $item['remark'] ?? '') }}"></td>
+                                        <td class="action-cell"><button type="button" class="btn btn-sm btn-danger remove-item-row"><i class="fas fa-trash-alt"></i></button></td-Styled>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <!-- Rest of the form (unchanged) -->
+            <!-- ... [Terms, Attachments, Summary, Buttons] ... -->
+        </form>
+    </div>
+</main>
+@endsection
+
+@push('scripts')
+<script>
+    // ... [All previous scripts remain unchanged until add-item-row] ...
+
+    $('#add-item-row').click(function () {
+        let lastRow = $('#item-list-container tr:last');
+        let newRow = lastRow.clone();
+        let newIndex = $('#item-list-container tr').length;
+
+        newRow.find('input, select').each(function () {
+            let name = $(this).attr('name');
+            if (name) {
+                let updatedName = name.replace(/\[\d+\]/, `[${newIndex}]`);
+                $(this).attr('name', updatedName);
+            }
+
+            // Reset values
+            if ($(this).hasClass('payment-term-select')) {
+                $(this).prop('disabled', true).val(''); // Always disabled
+            } else if (!$(this).is('[readonly]')) {
+                $(this).val('');
+            }
+        });
+
+        // Reset readonly fields
+        newRow.find('input[readonly]').val('');
+        newRow.find('.item-total, input[name*="[final_price]"]').val('').attr('placeholder', 'Auto Calc');
+        newRow.find('.token-amount').val('N/A');
+        newRow.find('.order-select').data('previous', '');
+        newRow.find('.allocation-select').html('<option value="">Select Allocation</option>');
+        newRow.find('input[name*="[item_name]"]').val('{{ $singleItemName ?? 'TMT Bar' }}');
+        newRow.find('input[name*="[length]"]').val('12');
+        newRow.find('input[name*="[loading_charge]"]').val({{ $loadingCharge ?? 265 }});
+        newRow.find('input[name*="[insurance]"]').val({{ $insuranceCharge ?? 40 }});
+        newRow.find('input[name*="[gst]"]').val({{ $gstRate ?? 18 }});
+        newRow.find('.basic-price-input').val('');
+        newRow.find('input[name*="[payment_term]"][type="hidden"]').remove();
+
+        $('#item-list-container').append(newRow);
+        updateSerialNumbers();
+        updateRemoveButtons();
+    });
+
+    // On allocation change → auto-fill & disable payment term
+    $('#item-list-container').on('change', '.allocation-select', function () {
+        let row = $(this).closest('tr');
+        let $select = $(this);
+        let selectedOption = $select.find('option:selected');
+        let paymentTerm = selectedOption.data('payment-term') || '';
+
+        let $paymentSelect = row.find('.payment-term-select');
+        let $hiddenInput = row.find('input[name*="[payment_term]"][type="hidden"]');
+
+        // Always disable the select
+        $paymentSelect.prop('disabled', true).val(paymentTerm);
+
+        // Update hidden input
+        if (paymentTerm) {
+            if ($hiddenInput.length) {
+                $hiddenInput.val(paymentTerm);
+            } else {
+                $paymentSelect.after(`<input type="hidden" name="${$paymentSelect.attr('name')}" value="${paymentTerm}">`);
+            }
+        } else {
+            $hiddenInput.remove();
+        }
+
+        // ... rest of allocation logic ...
+    });
+
+    // Initialize existing rows
+    $('#item-list-container .payment-term-select').each(function () {
+        $(this).prop('disabled', true);
+    });
+
+    // ... rest of your JS ...
+</script>
+@endpush
+
+<!-- Keep all other @push('styles') and scripts -->

@@ -1,0 +1,226 @@
+/* Required Error Message */
+.required_error {
+    color: red;
+    font-weight: bold;
+    padding-left: 4px;
+    font-size: 14px;
+}
+
+.required-classes {
+    color: red;
+    font-weight: bold;
+    padding-left: 4px;
+    font-size: 14px;
+}
+
+.error {
+    color: red;
+}
+
+
+.dashboard-header {
+    margin-bottom: 30px;
+    padding: 16px 25px;
+    border: none;
+    border-radius: 5px;
+    box-shadow: 0px 0 30px rgba(1, 41, 112, 0.1);
+    background-color: #fff;
+}
+
+label {
+    margin-bottom: 10px;
+}
+
+
+/* for table heading size */
+
+
+.table_heading_long {
+    width: 17% !important;
+}
+
+.table_heading_normal {
+    width: 12% !important;
+}
+
+.table_heading_action {
+    width: 4% !important;
+}
+
+
+/* TT notification  */
+
+.tt {
+    position: absolute;
+    top: 50px;
+    right: 30px;
+    border-radius: 12px;
+    background: #fff;
+    padding: 20px 35px 20px 25px;
+    box-shadow: 0 6px 20px -5px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+    transform: translateX(calc(100% + 30px));
+    transition: all 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.35);
+}
+
+.tt.active {
+    transform: translateX(0%);
+    height: 73px;
+    margin-top: 16px;
+}
+
+.tt .tt-content {
+    display: flex;
+    align-items: center;
+}
+
+.tt-content .check {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 35px;
+    min-width: 35px;
+    background-color: #2770ff;
+    color: #fff;
+    font-size: 20px;
+    border-radius: 50%;
+}
+
+.tt-content .error {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 35px;
+    min-width: 35px;
+    background-color: #ff2732;
+    color: #fff;
+    font-size: 20px;
+    border-radius: 50%;
+}
+
+
+.tt-content .update {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 35px;
+    min-width: 35px;
+    background-color: #e7ab05;
+    color: #fff;
+    font-size: 20px;
+    border-radius: 50%;
+}
+
+
+
+.tt-content .message {
+    display: flex;
+    flex-direction: column;
+    margin: 0 20px;
+}
+
+.tt .close {
+    position: absolute;
+    top: 10px;
+    right: 15px;
+    padding: 5px;
+    cursor: pointer;
+    opacity: 0.7;
+}
+
+.tt .close:hover {
+    opacity: 1;
+}
+
+.tt .pg {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 3px;
+    width: 100%;
+
+}
+
+.tt .pg:before {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    height: 100%;
+    width: 100%;
+    background-color: #2770ff;
+
+}
+
+.pg.active:before {
+    animation: progress 5s linear forwards;
+}
+
+@keyframes progress {
+    100% {
+        right: 100%;
+    }
+}
+
+.tt.active~button {
+    pointer-events: none;
+}
+
+
+/* ==============================  for table scroller ========================== */
+
+div.dt-container {
+    width: 100%;
+    margin: 0 auto;
+}
+
+/* Ensure that the demo table scrolls */
+th,
+td {
+    white-space: nowrap;
+}
+
+div.dataTables_wrapper {
+    width: 800px;
+    margin: 0 auto;
+}
+
+/* ==============================  for hide all select checkbox in data table ========================== */
+#first_column .dt-select-checkbox {
+    display: none;
+}
+
+/* ==============================  for text wrap ========================== */
+.text_descriptions {
+    max-width: 15vw !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ==============================  for text wrap ========================== */
+
+.text__left {
+    text-align: left !important;
+}
+
+/* ==============================  for readonly bg-color ========================== */
+input[readonly],
+textarea[readonly] {
+    background-color: #e9ecef !important;
+    /* cursor: not-allowed; */
+}
+
+/* ==============================  for content editing false ========================== */
+* {
+    caret-color: transparent;
+}
+
+input, textarea  {
+    caret-color: black !important;
+}
+
+
+ .table_heading {
+     width: 30%;
+ }

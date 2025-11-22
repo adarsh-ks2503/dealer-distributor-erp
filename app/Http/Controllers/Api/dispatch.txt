@@ -1,0 +1,588 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
+use App\Models\Dispatch;
+use App\Http\Resources\DispatchResource;
+use App\Models\Dealer;
+use App\Models\Distributor;
+use App\Models\Warehouse;
+use App\Models\ItemSize;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
+use App\Models\Order;
+use App\Models\State;
+use App\Models\LoadingPointMaster;
+use App\Models\DispatchAttachment;
+use App\Models\DispatchItem;
+use Illuminate\Support\Facades\DB;
+use App\Models\Item;
+use App\Models\LoadingCharge;
+use App\Models\InsuranceCharge;
+use App\Models\GstRate;
+use App\Models\OrderAllocation;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Storage;
+use Exception;
+use Illuminate\Validation\ValidationException;
+
+class DispatchController extends Controller
+{
+    public function index(Request $request)
+    {
+        // --- Step 1: Get the authenticated user from the API token ---
+        $appUser = $request->user();
+        $userType = $appUser->type;
+        $userCode = $appUser->code;
+
+        // --- Step 2: Start the base query ---
+        $query = Dispatch::query();
+
+        // Eager load all necessary relationships for efficiency
+        $query->with(['dealer', 'distributor', 'attachments', 'dispatchItems']);
+
+        // --- Step 3: Apply filters based on user type ---
+
+        // Case A: If the logged-in user is a 'dealer'
+        if ($userType === 'dealer') {
+            $dealer = Dealer::where('code', $userCode)->first();
+
+            if ($dealer) {
+                // Fetch only dispatches made for this specific dealer
+                $query->where('dealer_id', $dealer->id)
+                    ->where('type', 'dealer');
+            } else {
+                // If no dealer profile is found, return an empty result
+                return DispatchResource::collection(collect());
+            }
+        }
+        // Case B: If the logged-in user is a 'distributor'
+        elseif ($userType === 'distributor') {
+            $distributor = Distributor::where('code', $userCode)->first();
+
+            if ($distributor) {
+                // Get the IDs of all dealers who are part of this distributor's team
+                $teamDealerIds = Dealer::where('distributor_id', $distributor->id)->pluck('id');
+
+                // Fetch dispatches that meet one of two conditions:
+                $query->where(function ($q) use ($distributor, $teamDealerIds) {
+                    // 1. Dispatches made directly FOR the distributor
+                    $q->where(function ($subQ) use ($distributor) {
+                        $subQ->where('distributor_id', $distributor->id)
+                            ->where('type', 'distributor');
+                    })
+                        // 2. OR, dispatches made for ANY dealer on their team
+                        ->orWhere(function ($subQ) use ($teamDealerIds) {
+                            $subQ->whereIn('dealer_id', $teamDealerIds)
+                                ->where('type', 'dealer');
+                        });
+                });
+            } else {
+                // If no distributor profile is found, return an empty result
+                return DispatchResource::collection(collect());
+            }
+        }
+        // (Optional: Case C for Admin - if no filter is applied, it will show all dispatches)
+
+        // --- Step 4: Paginate and return the results ---
+        $dispatches = $query->latest()->paginate(15);
+
+        return DispatchResource::collection($dispatches);
+    }
+
+    // In app/Http/Controllers/Api/DispatchController.php
+    public function prepareDispatchData(Request $request)
+    {
+        $appUser = $request->user();
+
+        if ($appUser->type !== 'distributor') {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
+
+        $distributor = Distributor::where('code', $appUser->code)->firstOrFail();
+
+        // Distributor ki team ke saare active dealers
+        $teamDealers = Dealer::where('distributor_id', $distributor->id)
+            ->where('status', 'Active')
+            ->select('id', 'name')
+            ->get();
+
+        $warehouses = Warehouse::where('status', 'Active')->select('id', 'name')->get();
+
+        return response()->json([
+            'distributor' => ['id' => $distributor->id, 'name' => $distributor->name],
+            'team_dealers' => $teamDealers,
+            'warehouses' => $warehouses
+        ]);
+    }
+
+    // In app/Http/Controllers/Api/DispatchController.php
+    public function getPendingOrdersForParty($type, $partyId)
+    {
+        $query = Order::query()->with('allocations');
+
+        if ($type === 'dealer') {
+            $query->whereHas('allocations', function ($q) use ($partyId) {
+                $q->where('allocated_to_type', 'dealer')
+                    ->where('allocated_to_id', $partyId)
+                    ->where('remaining_qty', '>', 0);
+            });
+        } else { // type is distributor
+            $query->whereHas('allocations', function ($q) use ($partyId) {
+                $q->where('allocated_to_type', 'distributor')
+                    ->where('allocated_to_id', $partyId)
+                    ->where('remaining_qty', '>', 0);
+            });
+        }
+
+        $orders = $query->where('status', 'approved')
+            ->select('id', 'order_number', 'created_at')
+            ->get();
+
+        // Har order ke saath uski total ordered aur remaining qty bhej do
+        $orders->each(function ($order) {
+            $order->total_ordered_qty = $order->allocations->sum('qty');
+            $order->total_remaining_qty = $order->allocations->sum('remaining_qty');
+        });
+
+        return response()->json($orders->makeHidden('allocations'));
+    }
+
+
+    // In app/Http/Controllers/Api/DispatchController.php
+    public function generateNumber(Request $request)
+    {
+        // Yeh aapke web controller ka 'generateDispatchNumber' function hai
+        $date = $request->input('date', now()->format('Y-m-d'));
+        try {
+            $parsedDate = \Carbon\Carbon::parse($date);
+            $year = $parsedDate->month >= 4 ? $parsedDate->year : $parsedDate->year - 1;
+            $nextYear = substr($year + 1, -2);
+            $financialYear = "{$year}-{$nextYear}";
+
+            $count = Dispatch::whereYear('dispatch_date', '>=', $year)->whereYear('dispatch_date', '<=', $year + 1)->count();
+            $index = str_pad($count + 1, 4, '0', STR_PAD_LEFT);
+
+            $dispatchNumber = "DO_{$financialYear}_{$index}";
+
+            return response()->json(['dispatch_number' => $dispatchNumber]);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Failed to generate dispatch number'], 500);
+        }
+    }
+
+    public function store(Request $request)
+    {
+        DB::beginTransaction();
+        try {
+            // --- Step 1: Identify Logged-in Distributor (AUTO-DETECT) ---
+            $appUser = $request->user();
+            if (!$appUser || $appUser->type !== 'distributor') {
+                return response()->json(['status' => false, 'message' => 'Forbidden: Only authenticated distributors can create dispatches.'], 403);
+            }
+            $distributor = Distributor::where('code', $appUser->code)->firstOrFail();
+
+            // --- Step 2: Auto-generate Dispatch Number (AUTO-GENERATE) ---
+            $date = $request->input('dispatch_date', now()->format('Y-m-d'));
+            $parsedDate = \Carbon\Carbon::parse($date);
+            $year = $parsedDate->month >= 4 ? $parsedDate->year : $parsedDate->year - 1;
+            $nextYear = substr($year + 1, -2);
+            $financialYear = "{$year}-{$nextYear}";
+            $count = Dispatch::whereYear('dispatch_date', '>=', $year)->whereYear('dispatch_date', '<=', $year + 1)->count();
+            $dispatchNumber = "DO_{$financialYear}_" . str_pad($count + 1, 4, '0', STR_PAD_LEFT);
+
+            // --- Step 3: Validation (Smart Version) ---
+            // We use your detailed validation, but remove fields that are now automatic.
+            $validated = $request->validate([
+                'dispatch_number' => 'required',
+                'type' => ['required', 'in:distributor,dealer'],
+                'distributor_id' => [
+                    Rule::requiredIf(function () use ($request) {
+                        return $request->type === 'distributor';
+                    }),
+                    'integer',
+                    'exists:distributors,id',
+                ],
+                'dealer_id' => [
+                    Rule::requiredIf(function () use ($request) {
+                        return $request->type === 'dealer';
+                    }),
+                    'integer',
+                    'exists:dealers,id',
+                ],
+                'recipient_name' => ['required', 'string', 'max:255'],
+                'recipient_address' => ['required', 'string', 'max:1000'],
+                'recipient_state' => ['required', 'integer', 'exists:states,id'],
+                'recipient_city' => ['required', 'integer', 'exists:cities,id'],
+                'recipient_pincode' => ['required', 'string', 'regex:/^[0-9]{5,6}$/', 'max:10'],
+                'consignee_name' => ['required', 'string', 'max:255'],
+                'consignee_address' => ['required', 'string', 'max:1000'],
+                'consignee_state' => ['required', 'integer', 'exists:states,id'],
+                'consignee_city' => ['required', 'integer', 'exists:cities,id'],
+                'consignee_pincode' => ['required', 'string', 'regex:/^[0-9]{5,6}$/', 'max:10'],
+                'consignee_mobile_no' => ['nullable', 'string', 'regex:/^[0-9]{10,15}$/', 'max:15'],
+                'dispatch_date' => ['required', 'date', 'after_or_equal:today'],
+                'loading_point_id' => ['nullable', 'integer', 'exists:loading_point_masters,id'],
+                'bill_to' => ['nullable', 'string', 'max:255'],
+                'bill_number' => ['required', 'string', 'alpha_num:ascii', 'max:50', 'unique:dispatches,bill_number'],
+                'dispatch_out_time' => ['nullable', 'date_format:H:i'],
+                'payment_slip' => ['nullable', 'file', 'max:2048'], // Removed mimes restriction, kept size limit
+                'dispatch_remarks' => ['nullable', 'string', 'max:2000'],
+                'transporter_name' => ['required', 'string', 'max:255'],
+                'vehicle_no' => ['nullable', 'string', 'regex:/^[A-Z0-9 -]{5,20}$/', 'max:20'],
+                'driver_name' => ['nullable', 'string', 'max:255'],
+                'driver_mobile_no' => ['nullable', 'string', 'regex:/^[0-9]{10,15}$/', 'max:15'],
+                'e_way_bill_no' => ['nullable', 'string', 'alpha_num:ascii', 'max:50'],
+                'bilty_no' => ['nullable', 'string', 'alpha_num:ascii', 'max:50'],
+                'transport_remarks' => ['nullable', 'string', 'max:2000'],
+                'terms_conditions' => ['nullable', 'string', 'max:5000'],
+                'additional_charges' => ['nullable', 'numeric', 'min:0', 'max:99999999.99'],
+                'items' => ['required', 'array', 'min:1'],
+                'items.*.order_id' => ['required', 'integer', 'exists:orders,id'],
+                'items.*.allocation_id' => ['required', 'integer', 'exists:order_allocations,id'],
+                'items.*.order_qty' => ['required', 'numeric', 'min:0', 'max:999999.99'],
+                'items.*.already_disp' => ['required', 'numeric', 'min:0', 'max:999999.99'],
+                'items.*.remaining_qty' => ['required', 'numeric', 'min:0', 'max:999999.99'],
+                'items.*.item_name' => ['required', 'string', 'max:255'],
+                'items.*.size' => ['required', 'integer', 'exists:item_sizes,id'],
+                'items.*.length' => ['required', 'numeric', 'min:0', 'max:999.99'],
+                'items.*.dispatch_qty' => ['required', 'numeric', 'min:0.01', 'max:999999.99'],
+                'items.*.basic_price' => ['required', 'numeric', 'min:0', 'max:999999.99'],
+                'items.*.gauge_diff' => ['required', 'numeric', 'min:-999999.99', 'max:999999.99'],
+                'items.*.final_price' => ['required', 'numeric', 'min:0', 'max:999999.99'],
+                'items.*.loading_charge' => ['required', 'numeric', 'min:0', 'max:999999.99'],
+                'items.*.insurance' => ['required', 'numeric', 'min:0', 'max:999999.99'],
+                'items.*.gst' => ['required', 'numeric', 'min:0', 'max:100'],
+                'items.*.token_amount' => ['nullable', 'numeric', 'min:0', 'max:999999.99'],
+                'items.*.total_amount' => ['required', 'numeric', 'min:0', 'max:999999999.99'],
+                'items.*.payment_term' => ['required', 'string', 'in:Advance,Next Day,15 Days Later,30 Days Later'],
+                'items.*.remark' => ['nullable', 'string', 'max:2000'],
+                'attachments' => ['nullable', 'array'], // Made attachments optional
+                'attachments.*.document' => ['nullable', 'file', 'max:2048'], // Allow more file types
+                'attachments.*.remark' => ['nullable', 'string', 'max:2000'],
+            ], [
+                // Custom error messages for all fields and scenarios
+                'type.required' => 'The dispatch type is required.',
+                'type.in' => 'The dispatch type must be either distributor or dealer.',
+                'distributor_id.required_if' => 'The distributor ID is required when type is distributor.',
+                'distributor_id.integer' => 'The distributor ID must be an integer.',
+                'distributor_id.exists' => 'The selected distributor does not exist.',
+                'dealer_id.required_if' => 'The dealer ID is required when type is dealer.',
+                'dealer_id.integer' => 'The dealer ID must be an integer.',
+                'dealer_id.exists' => 'The selected dealer does not exist.',
+                'recipient_name.required' => 'The recipient name is required.',
+                'recipient_name.string' => 'The recipient name must be a string.',
+                'recipient_name.max' => 'The recipient name may not be greater than 255 characters.',
+                'recipient_address.required' => 'The billing address is required.',
+                'recipient_address.string' => 'The billing address must be a string.',
+                'recipient_address.max' => 'The billing address may not be greater than 1000 characters.',
+                'recipient_state.required' => 'The billing state is required.',
+                'recipient_state.integer' => 'The billing state must be an integer.',
+                'recipient_state.exists' => 'The selected billing state does not exist.',
+                'recipient_city.required' => 'The billing city is required.',
+                'recipient_city.integer' => 'The billing city must be an integer.',
+                'recipient_city.exists' => 'The selected billing city does not exist.',
+                'recipient_pincode.required' => 'The billing pincode is required.',
+                'recipient_pincode.string' => 'The billing pincode must be a string.',
+                'recipient_pincode.regex' => 'The billing pincode format is invalid (5-6 digits).',
+                'recipient_pincode.max' => 'The billing pincode may not be greater than 10 characters.',
+                'consignee_name.required' => 'The consignee name is required.',
+                'consignee_name.string' => 'The consignee name must be a string.',
+                'consignee_name.max' => 'The consignee name may not be greater than 255 characters.',
+                'consignee_address.required' => 'The delivery address is required.',
+                'consignee_address.string' => 'The delivery address must be a string.',
+                'consignee_address.max' => 'The delivery address may not be greater than 1000 characters.',
+                'consignee_state.required' => 'The delivery state is required.',
+                'consignee_state.integer' => 'The delivery state must be an integer.',
+                'consignee_state.exists' => 'The selected delivery state does not exist.',
+                'consignee_city.required' => 'The delivery city is required.',
+                'consignee_city.integer' => 'The delivery city must be an integer.',
+                'consignee_city.exists' => 'The selected delivery city does not exist.',
+                'consignee_pincode.required' => 'The delivery pincode is required.',
+                'consignee_pincode.string' => 'The delivery pincode must be a string.',
+                'consignee_pincode.regex' => 'The delivery pincode format is invalid (5-6 digits).',
+                'consignee_pincode.max' => 'The delivery pincode may not be greater than 10 characters.',
+                'consignee_mobile_no.string' => 'The consignee mobile number must be a string.',
+                'consignee_mobile_no.regex' => 'The consignee mobile number format is invalid (10-15 digits).',
+                'consignee_mobile_no.max' => 'The consignee mobile number may not be greater than 15 characters.',
+                'dispatch_date.required' => 'The dispatch date is required.',
+                'dispatch_date.date' => 'The dispatch date must be a valid date.',
+                'dispatch_date.after_or_equal' => 'The dispatch date cannot be in the past.',
+                'loading_point_id.integer' => 'The loading point ID must be an integer.',
+                'loading_point_id.exists' => 'The selected loading point does not exist.',
+                'bill_to.string' => 'The bill to must be a string.',
+                'bill_to.max' => 'The bill to may not be greater than 255 characters.',
+                'bill_number.required' => 'The bill number is required.',
+                'bill_number.string' => 'The bill number must be a string.',
+                'bill_number.alpha_num' => 'The bill number must contain only alphanumeric characters.',
+                'bill_number.max' => 'The bill number may not be greater than 50 characters.',
+                'bill_number.unique' => 'The bill number has already been taken.',
+                'dispatch_out_time.date_format' => 'The dispatch out time must be in the format HH:MM.',
+                'payment_slip.file' => 'The payment slip must be a file.',
+                'payment_slip.max' => 'The payment slip may not be greater than 2MB.',
+                'dispatch_remarks.string' => 'The dispatch remarks must be a string.',
+                'dispatch_remarks.max' => 'The dispatch remarks may not be greater than 2000 characters.',
+                'transporter_name.required' => 'The transporter name is required.',
+                'transporter_name.string' => 'The transporter name must be a string.',
+                'transporter_name.max' => 'The transporter name may not be greater than 255 characters.',
+                'vehicle_no.string' => 'The vehicle number must be a string.',
+                'vehicle_no.regex' => 'The vehicle number format is invalid (alphanumeric with spaces or hyphens, 5-20 characters).',
+                'vehicle_no.max' => 'The vehicle number may not be greater than 20 characters.',
+                'driver_name.string' => 'The driver name must be a string.',
+                'driver_name.max' => 'The driver name may not be greater than 255 characters.',
+                'driver_mobile_no.string' => 'The driver mobile number must be a string.',
+                'driver_mobile_no.regex' => 'The driver mobile number format is invalid (10-15 digits).',
+                'driver_mobile_no.max' => 'The driver mobile number may not be greater than 15 characters.',
+                'e_way_bill_no.string' => 'The E-Way bill number must be a string.',
+                'e_way_bill_no.alpha_num' => 'The E-Way bill number must contain only alphanumeric characters.',
+                'e_way_bill_no.max' => 'The E-Way bill number may not be greater than 50 characters.',
+                'bilty_no.string' => 'The bilty number must be a string.',
+                'bilty_no.alpha_num' => 'The bilty number must contain only alphanumeric characters.',
+                'bilty_no.max' => 'The bilty number may not be greater than 50 characters.',
+                'transport_remarks.string' => 'The transport remarks must be a string.',
+                'transport_remarks.max' => 'The transport remarks may not be greater than 2000 characters.',
+                'terms_conditions.string' => 'The terms and conditions must be a string.',
+                'terms_conditions.max' => 'The terms and conditions may not be greater than 5000 characters.',
+                'additional_charges.numeric' => 'The additional charges must be a number.',
+                'additional_charges.min' => 'The additional charges must be at least 0.',
+                'additional_charges.max' => 'The additional charges may not be greater than 99,999,999.99.',
+                'items.required' => 'At least one item is required for the dispatch.',
+                'items.array' => 'The items must be an array.',
+                'items.min' => 'At least one item is required for the dispatch.',
+                'items.*.order_id.required' => 'The order ID is required for item #:index.',
+                'items.*.order_id.integer' => 'The order ID must be an integer for item #:index.',
+                'items.*.order_id.exists' => 'The selected order does not exist for item #:index.',
+                'items.*.allocation_id.required' => 'The allocation ID is required for item #:index.',
+                'items.*.allocation_id.integer' => 'The allocation ID must be an integer for item #:index.',
+                'items.*.allocation_id.exists' => 'The selected allocation does not exist for item #:index.',
+                'items.*.order_qty.required' => 'The order quantity is required for item #:index.',
+                'items.*.order_qty.numeric' => 'The order quantity must be a number for item #:index.',
+                'items.*.order_qty.min' => 'The order quantity must be at least 0 for item #:index.',
+                'items.*.order_qty.max' => 'The order quantity may not be greater than 999,999.99 for item #:index.',
+                'items.*.already_disp.required' => 'The already dispatched quantity is required for item #:index.',
+                'items.*.already_disp.numeric' => 'The already dispatched quantity must be a number for item #:index.',
+                'items.*.already_disp.min' => 'The already dispatched quantity must be at least 0 for item #:index.',
+                'items.*.already_disp.max' => 'The already dispatched quantity may not be greater than 999,999.99 for item #:index.',
+                'items.*.remaining_qty.required' => 'The remaining quantity is required for item #:index.',
+                'items.*.remaining_qty.numeric' => 'The remaining quantity must be a number for item #:index.',
+                'items.*.remaining_qty.min' => 'The remaining quantity must be at least 0 for item #:index.',
+                'items.*.remaining_qty.max' => 'The remaining quantity may not be greater than 999,999.99 for item #:index.',
+                'items.*.item_name.required' => 'The item name is required for item #:index.',
+                'items.*.item_name.string' => 'The item name must be a string for item #:index.',
+                'items.*.item_name.max' => 'The item name may not be greater than 255 characters for item #:index.',
+                'items.*.size.required' => 'The size is required for item #:index.',
+                'items.*.size.integer' => 'The size must be an integer for item #:index.',
+                'items.*.size.exists' => 'The selected size does not exist for item #:index.',
+                'items.*.length.required' => 'The length is required for item #:index.',
+                'items.*.length.numeric' => 'The length must be a number for item #:index.',
+                'items.*.length.min' => 'The length must be at least 0 for item #:index.',
+                'items.*.length.max' => 'The length may not be greater than 999.99 for item #:index.',
+                'items.*.dispatch_qty.required' => 'The dispatch quantity is required for item #:index.',
+                'items.*.dispatch_qty.numeric' => 'The dispatch quantity must be a number for item #:index.',
+                'items.*.dispatch_qty.min' => 'The dispatch quantity must be at least 0.01 for item #:index.',
+                'items.*.dispatch_qty.max' => 'The dispatch quantity may not be greater than 999,999.99 for item #:index.',
+                'items.*.basic_price.required' => 'The basic price is required for item #:index.',
+                'items.*.basic_price.numeric' => 'The basic price must be a number for item #:index.',
+                'items.*.basic_price.min' => 'The basic price must be at least 0 for item #:index.',
+                'items.*.basic_price.max' => 'The basic price may not be greater than 999,999.99 for item #:index.',
+                'items.*.gauge_diff.required' => 'The gauge difference is required for item #:index.',
+                'items.*.gauge_diff.numeric' => 'The gauge difference must be a number for item #:index.',
+                'items.*.gauge_diff.min' => 'The gauge difference must be at least -999,999.99 for item #:index.',
+                'items.*.gauge_diff.max' => 'The gauge difference may not be greater than 999,999.99 for item #:index.',
+                'items.*.final_price.required' => 'The final price is required for item #:index.',
+                'items.*.final_price.numeric' => 'The final price must be a number for item #:index.',
+                'items.*.final_price.min' => 'The final price must be at least 0 for item #:index.',
+                'items.*.final_price.max' => 'The final price may not be greater than 999,999.99 for item #:index.',
+                'items.*.loading_charge.required' => 'The loading charge is required for item #:index.',
+                'items.*.loading_charge.numeric' => 'The loading charge must be a number for item #:index.',
+                'items.*.loading_charge.min' => 'The loading charge must be at least 0 for item #:index.',
+                'items.*.loading_charge.max' => 'The loading charge may not be greater than 999,999.99 for item #:index.',
+                'items.*.insurance.required' => 'The insurance charge is required for item #:index.',
+                'items.*.insurance.numeric' => 'The insurance charge must be a number for item #:index.',
+                'items.*.insurance.min' => 'The insurance charge must be at least 0 for item #:index.',
+                'items.*.insurance.max' => 'The insurance charge may not be greater than 999,999.99 for item #:index.',
+                'items.*.gst.required' => 'The GST percentage is required for item #:index.',
+                'items.*.gst.numeric' => 'The GST percentage must be a number for item #:index.',
+                'items.*.gst.min' => 'The GST percentage must be at least 0 for item #:index.',
+                'items.*.gst.max' => 'The GST percentage may not be greater than 100 for item #:index.',
+                'items.*.token_amount.numeric' => 'The token amount must be a number for item #:index.',
+                'items.*.token_amount.min' => 'The token amount must be at least 0 for item #:index.',
+                'items.*.token_amount.max' => 'The token amount may not be greater than 999,999.99 for item #:index.',
+                'items.*.total_amount.required' => 'The total amount is required for item #:index.',
+                'items.*.total_amount.numeric' => 'The total amount must be a number for item #:index.',
+                'items.*.total_amount.min' => 'The total amount must be at least 0 for item #:index.',
+                'items.*.total_amount.max' => 'The total amount may not be greater than 999,999,999.99 for item #:index.',
+                'items.*.payment_term.string' => 'The payment term must be a string for item #:index.',
+                'items.*.payment_term.in' => 'The payment term must be one of: Advance, Next Day, 15 Days Later, 30 Days Later for item #:index.',
+                'items.*.remark.string' => 'The remark must be a string for item #:index.',
+                'items.*.remark.max' => 'The remark may not be greater than 2000 characters for item #:index.',
+                'attachments.array' => 'The attachments must be an array.',
+                'attachments.*.document.file' => 'The document must be a file for attachment #:index.',
+                'attachments.*.document.mimes' => 'The document must be a file of type: jpg, jpeg, png, pdf, doc, docx, xls, xlsx for attachment #:index.',
+                'attachments.*.document.max' => 'The document may not be greater than 2MB for attachment #:index.',
+                'attachments.*.remark.string' => 'The remark must be a string for attachment #:index.',
+                'attachments.*.remark.max' => 'The remark may not be greater than 2000 characters for attachment #:index.',
+            ]);
+
+
+            // Handle payment_slip upload
+            $paymentSlipPath = null;
+            if ($request->hasFile('payment_slip')) {
+                $paymentSlipPath = $request->file('payment_slip')->store('dispatches/payment_slips', 'public');
+            }
+
+            // --- Step 4: Create the Dispatch Record (with Auto-filled Data) ---
+            $dispatch = Dispatch::create([
+                'dispatch_number' => $dispatchNumber,
+                'type' => $request->filled('dealer_id') ? 'dealer' : 'distributor',
+                'distributor_id' => $distributor->id, // Auto-filled
+                'dealer_id' => $validated['dealer_id'] ?? null,
+                'recipient_name' => $validated['recipient_name'],
+                'recipient_address' => $validated['recipient_address'],
+                'recipient_state_id' => $validated['recipient_state'],
+                'recipient_city_id' => $validated['recipient_city'],
+                'recipient_pincode' => $validated['recipient_pincode'],
+                'consignee_name' => $validated['consignee_name'],
+                'consignee_address' => $validated['consignee_address'],
+                'consignee_state_id' => $validated['consignee_state'],
+                'consignee_city_id' => $validated['consignee_city'],
+                'consignee_pincode' => $validated['consignee_pincode'],
+                'consignee_mobile_no' => $validated['consignee_mobile_no'] ?? null,
+                'dispatch_date' => $validated['dispatch_date'],
+                'warehouse_id' => $request['warehouse_id'] ?? null,
+                'bill_to' => $validated['bill_to'] ?? null,
+                'bill_number' => $validated['bill_number'],
+                'dispatch_out_time' => $validated['dispatch_out_time'] ?? null,
+                'payment_slip' => $paymentSlipPath,
+                'dispatch_remarks' => $validated['dispatch_remarks'] ?? null,
+                'transporter_name' => $validated['transporter_name'],
+                'vehicle_no' => $validated['vehicle_no'] ?? null,
+                'driver_name' => $validated['driver_name'] ?? null,
+                'driver_mobile_no' => $validated['driver_mobile_no'] ?? null,
+                'e_way_bill_no' => $validated['e_way_bill_no'] ?? null,
+                'bilty_no' => $validated['bilty_no'] ?? null,
+                'transport_remarks' => $validated['transport_remarks'] ?? null,
+                'terms_conditions' => $validated['terms_conditions'] ?? null,
+                'additional_charges' => (float) ($validated['additional_charges'] ?? 0.00),
+                'total_amount' => 0.00, // To be updated
+                'status' => 'pending'
+            ]);
+
+            // --- Step 5: Process Items and Calculate Grand Total ---
+            $grandTotal = (float)($request->input('additional_charges', 0));
+            foreach ($validated['items'] as $itemData) {
+                $allocation = OrderAllocation::findOrFail($itemData['allocation_id']);
+
+                // Recalculate totals on the backend for security
+                $finalPrice = (float)$itemData['basic_price'] + (float)$itemData['gauge_diff'];
+                $baseTotal = ($finalPrice + (float)$itemData['loading_charge'] + (float)$itemData['insurance']) * (float)$itemData['dispatch_qty'];
+                $gstAmount = $baseTotal * ((float)$itemData['gst'] / 100);
+                $itemTotal = $baseTotal + $gstAmount;
+
+                $grandTotal += $itemTotal;
+
+                DispatchItem::create([
+                    'dispatch_id' => $dispatch->id,
+                    'order_id' => $itemData['order_id'],
+                    'allocation_id' => $itemData['allocation_id'],
+                    'item_name' => $itemData['item_name'],
+                    'size_id' => $itemData['size'],
+                    'length' => $itemData['length'],
+                    'dispatch_qty' => $itemData['dispatch_qty'],
+                    'basic_price' => $itemData['basic_price'],
+                    'gauge_diff' => $itemData['gauge_diff'],
+                    'final_price' => $finalPrice,
+                    'loading_charge' => $itemData['loading_charge'],
+                    'insurance' => $itemData['insurance'],
+                    'gst' => $itemData['gst'],
+                    'total_amount' => $itemTotal,
+                    // ... etc.
+                ]);
+            }
+
+            $dispatch->total_amount = $grandTotal;
+            $dispatch->save();
+
+            // --- Step 6: Handle Attachments ---
+            if ($request->hasFile('attachments')) {
+                foreach ($request->file('attachments') as $key => $fileData) {
+                    if (isset($fileData['document']) && $fileData['document']->isValid()) {
+                        $path = $fileData['document']->store('dispatches/attachments', 'public');
+                        DispatchAttachment::create([
+                            'dispatch_id' => $dispatch->id,
+                            'document' => $path,
+                            'remark' => $request->input("attachments.$key.remark"),
+                        ]);
+                    }
+                }
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Dispatch created successfully!',
+                'data' => new \App\Http\Resources\DispatchResource($dispatch->load('dispatchItems', 'attachments'))
+            ], 201);
+        } catch (ValidationException $e) {
+            DB::rollBack();
+            return response()->json(['status' => false, 'message' => 'Validation failed', 'errors' => $e->errors()], 422);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('API Dispatch store error: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'An error occurred while creating the dispatch.'], 500);
+        }
+    }
+
+    public function show(Request $request, Dispatch $dispatch)
+    {
+        // --- Step 1: Get the Authenticated User ---
+        $appUser = $request->user();
+        $userType = $appUser->type;
+        $userCode = $appUser->code;
+
+        $isAllowed = false;
+
+        // --- Step 2: Perform the Authorization Check ---
+        if ($userType === 'dealer') {
+            $dealer = Dealer::where('code', $userCode)->first();
+            // Check if a dealer profile exists AND if this dispatch belongs to them
+            if ($dealer && $dispatch->dealer_id === $dealer->id) {
+                $isAllowed = true;
+            }
+        } elseif ($userType === 'distributor') {
+            $distributor = Distributor::where('code', $userCode)->first();
+            if ($distributor) {
+                // Check if the dispatch was made directly to the distributor
+                if ($dispatch->distributor_id === $distributor->id) {
+                    $isAllowed = true;
+                } else {
+                    // OR, check if the dispatch was made to a dealer who is on their team
+                    $teamDealerIds = Dealer::where('distributor_id', $distributor->id)->pluck('id');
+                    if ($teamDealerIds->contains($dispatch->dealer_id)) {
+                        $isAllowed = true;
+                    }
+                }
+            }
+        }
+        // (Optional) Allow admins to see everything
+        // if ($appUser->hasRole('Admin')) {
+        //     $isAllowed = true;
+        // }
+
+        // --- Step 3: If Not Allowed, Deny Access ---
+        if (!$isAllowed) {
+            return response()->json([
+                'status' => false,
+                'message' => 'You are not authorized to view this dispatch.'
+            ], 403); // 403 Forbidden
+        }
+
+        // --- Step 4: If Allowed, Proceed as Normal ---
+        $dispatch->load(['dealer', 'distributor', 'attachments', 'dispatchItems.order', 'dispatchItems.size']);
+        return new DispatchResource($dispatch);
+    }
+}

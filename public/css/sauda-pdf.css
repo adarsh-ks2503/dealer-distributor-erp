@@ -1,0 +1,62 @@
+body {
+    font-family: Arial, Helvetica, sans-serif;
+    margin: 20px;
+}
+
+.letterhead {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+}
+
+.logo-section {
+    display: flex;
+    align-items: flex-start;
+}
+
+.logo {
+    width: 60px;
+    height: auto;
+    margin-right: 10px;
+}
+
+.company-info h1 {
+    color: #1a237e;
+    margin: 0;
+    font-size: 26px;
+    font-weight: bold;
+}
+
+.proprietor {
+    margin: 2px 0;
+    font-size: 14px;
+}
+
+.sub-company {
+    margin: 2px 0;
+    font-weight: bold;
+    font-size: 15px;
+}
+
+.desc {
+    margin: 2px 0;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+}
+
+.products {
+    margin: 5px 0 0 0;
+    font-size: 13px;
+}
+
+.right-info {
+    text-align: right;
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.custom-line {
+    border: none;
+    border-top: 2px solid #1a237e;
+    margin-top: 5px;
+}
