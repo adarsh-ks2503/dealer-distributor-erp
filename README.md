@@ -15,6 +15,12 @@ cd existing_repo
 git remote add origin https://gitlab.com/Yobhigesh/mitra-group
 git branch -M main
 git push -uf origin main
+
+also to login the credentials for admin panel are
+email : admin@gmail.com
+password : 12345678
+
+ps: notification and email is not workig in this model of repo because f some credential issues in fcm
 ```
 
 ## Integrate with your tools
